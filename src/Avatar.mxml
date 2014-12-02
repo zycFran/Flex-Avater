@@ -1,0 +1,319 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Application xmlns:fx="http://ns.adobe.com/mxml/2009"
+               xmlns:s="library://ns.adobe.com/flex/spark"
+               xmlns:mx="library://ns.adobe.com/flex/mx"
+               width="505" height="385" creationComplete="init()">
+
+    <fx:Style>
+        @namespace s "library://ns.adobe.com/flex/spark";
+        @namespace mx "library://ns.adobe.com/flex/mx";
+        s|Label{
+            fontFamily: "Microsoft YaHei";
+        }
+    </fx:Style>
+
+    <fx:Script>
+		<![CDATA[
+        import com.Multipart;
+
+        import mx.graphics.codec.JPEGEncoder;
+
+        import mx.controls.Alert;
+        import mx.graphics.ImageSnapshot;
+
+        public var file:FileReference=new FileReference();
+        public var typeFilter:FileFilter = new FileFilter("图片","*.jpg;*.gif;*.png;*.jpeg");
+        public var uploadURL:String = ExternalInterface.call("setUploadURL","");
+
+        public function init():void{
+            if(uploadURL == ""){
+                Alert.show("上传头像的路径还没有设置");
+            }
+        }
+
+        //////////////////////// 选择本地图片 ////////////////////////////////////
+        private function BrowseFile():void{
+            file.browse([typeFilter]);
+            file.addEventListener(Event.SELECT,fileSelected);//文件选择
+        }
+        private function fileSelected(evt:Event):void{
+            file.load();
+            file.addEventListener(Event.COMPLETE,fileLoaded);	//文件选择完成
+        }
+        private function fileLoaded(evt:Event):void{
+            var loader:Loader=new Loader();
+            if(file.size > 2 * 1024 * 1024){
+                Alert.show("请上传小于2M的图片");
+                return;
+            }
+            loader.loadBytes(file.data);
+            loader.contentLoaderInfo.addEventListener(Event.COMPLETE,function(evt:Event):void{
+                var target:Loader=evt.target.loader;
+
+                imgPicture.source = file.data;//显示用的大图片
+                truePic.width = (target.width > target.height)?target.width:target.height;
+                truePic.height = (target.width > target.height)?target.width:target.height;
+                truePic.source = file.data;//真正的大图片
+                canclick();
+            });
+        }
+
+        ///////////////////// 按钮操作 /////////////////////////////////////////////
+        public function cannotclick():void{
+            btn_save.enabled = false;
+            btn_cancel.enabled = false;
+
+            bigshow.visible = false;
+            defaultpic.visible = true;
+        }
+
+        public function canclick():void{
+            btn_save.enabled = true;
+            btn_cancel.enabled = true;
+
+            bigshow.visible = true;
+            defaultpic.visible = false;
+
+            //执行小截图操作
+            setTimeout(doCutPic, 500);
+        }
+
+        //取消截图
+        public function cancelpic():void{
+            //两个图片
+            imgPicture.source = "";
+
+            bigshow.visible = false;
+            defaultpic.visible = true;
+
+            cannotclick();
+        }
+
+        //获取本地图片
+        public function showLocal():void{
+            file_edit.visible = true;
+
+            BrowseFile();
+        }
+
+        //获取真正大图 和 显示用的大图 的比例
+        public function getProportion():Number{
+            var proportion:Number = truePic.width / imgPicture.width;
+            return proportion;
+        }
+
+        ////////////////////// 截取小方块的移动 ///////////////////////////////////
+        public function boxdown(event:MouseEvent):void {
+            moveBox.startDrag(false, new Rectangle (0, 0, 300-moveBox.width, 300-moveBox.height ));
+            stage.addEventListener(MouseEvent.MOUSE_UP , boxup);
+            stage.addEventListener(MouseEvent.MOUSE_MOVE , boxmove);
+        }
+        public function boxup(event:MouseEvent):void{
+            moveBox.stopDrag();
+            stage.removeEventListener(MouseEvent.MOUSE_UP, boxup);
+            stage.removeEventListener(MouseEvent.MOUSE_MOVE, boxmove);
+        }
+        public function boxmove(event:MouseEvent):void{
+            //纠正手柄的位置
+            shoubing.x = moveBox.x + moveBox.width - shoubing.width/2 - 1;
+            shoubing.y = moveBox.y + moveBox.height - shoubing.height/2 - 1;
+
+            //执行小截图操作
+            doCutPic();
+        }
+
+        ////////////////////////// 手柄的移动 /////////////////////////////////////////////
+        public function sb(event:MouseEvent):void{
+            var fanwei:Number = 300 - moveBox.x;
+            if(300 - moveBox.y < fanwei)
+            {
+                fanwei = 300 - moveBox.y
+            }
+            shoubing.startDrag(false, new Rectangle (moveBox.x+10, moveBox.y+10,
+                    fanwei-shoubing.width*2+shoubing.width/2-1,
+                    fanwei-shoubing.height*2+shoubing.height/2-1 ));
+            stage.addEventListener(MouseEvent.MOUSE_UP , sbup);
+            stage.addEventListener(MouseEvent.MOUSE_MOVE , sbmove);
+        }
+        public function sbup(event:MouseEvent):void{
+            shoubing.stopDrag();
+            stage.removeEventListener(MouseEvent.MOUSE_UP, sbup);
+            stage.removeEventListener(MouseEvent.MOUSE_MOVE, sbmove);
+        }
+        public function sbmove(event:MouseEvent):void {
+            //纠正截图方块的宽高
+            moveBox.width = shoubing.x - moveBox.x + shoubing.width/2 + 1;
+            moveBox.height = shoubing.x - moveBox.x + shoubing.width/2 + 1;
+
+            //纠正手柄的位置
+            shoubing.x = moveBox.x + moveBox.width - shoubing.width/2 - 1;
+            shoubing.y = moveBox.y + moveBox.height - shoubing.height/2 - 1;
+
+            //执行小截图操作
+            doCutPic();
+        }
+
+        ////////////////////////// 小截图 ///////////////////////////////////////
+        public function doCutPic():void{
+            //同步：真正图片的选择框和显示图片的选择框
+            trueBox.width = int(moveBox.width * getProportion());
+            trueBox.height = int(moveBox.height * getProportion());
+            trueBox.x = int(moveBox.x * getProportion());
+            trueBox.y = int(moveBox.y * getProportion());
+
+            //用bitmapdata全部获取预览图片的像素(真正的应该是：实际图片的像素)
+            var initBD:BitmapData = new BitmapData(truePic.width,truePic.height);
+            initBD.draw(truePic);
+            var bytearray:ByteArray = new ByteArray();
+
+            //矩形为要截取区域
+            var re:Rectangle = new Rectangle(trueBox.x,trueBox.y,trueBox.width,trueBox.height);
+            bytearray = initBD.getPixels(re); //截取出所选区域的像素集合
+            var imgBD:BitmapData = new BitmapData(trueBox.width,trueBox.height);
+            bytearray.position=0;//必须的，当前的bytearray.position为最大长度，要设为从0开始读取
+            var fillre:Rectangle = new Rectangle(0,0,trueBox.width,trueBox.height);
+            imgBD.setPixels(fillre,bytearray); //将截取出的像素集合存在新的bitmapdata里，大小和截取区域一样
+
+            imgPictureLittle.source = new Bitmap(imgBD);
+            imgPictureLittle.smooth = true;
+
+            imgPictureLittle2.source = new Bitmap(imgBD);
+            imgPictureLittle2.smooth = true;
+        }
+
+        public function setPic(bmp:BitmapData, _left:Number):BitmapData{
+            var m:Matrix = new Matrix();
+            if(_left == 1)
+            {
+                m.rotate(Math.PI/2);
+                m.translate(bmp.height,0);
+            }
+            else
+            {
+                m.rotate(-Math.PI/2);
+                m.translate(0,bmp.width);
+            }
+            var bd:BitmapData = new BitmapData(bmp.height, bmp.width);
+            bd.draw(bmp,m);
+            return bd;
+        }
+
+        //////////////////////// 上传文件  /////////////////////////////////////
+        public function UploadFile():void{
+            var encoder:JPEGEncoder = new JPEGEncoder(500);
+            var imageSnapshotB:ImageSnapshot = ImageSnapshot.captureImage(imgPictureLittle, 0, encoder);
+
+            uploadHandler(imageSnapshotB.data);
+
+        }
+        public function closeHandler():void{
+            //调用页面的页面中的js，执行需要的操作
+            ExternalInterface.call("closeHandler");
+        }
+        private function uploadHandler(imageBytes:ByteArray):void {
+            if(uploadURL == ""){
+                Alert.show("上传头像的路径还没有设置");
+                return;
+            }
+            // Multipart form upload
+            var form:Multipart = new Multipart(uploadURL);
+
+            // add files
+            form.addFile('header.jpg', imageBytes, "image/jpeg", 'header' + ".jpg");
+
+            // Load request
+            var loader:URLLoader = new URLLoader();
+            loader.addEventListener(Event.COMPLETE, function(evt:Event):void{
+                var temp:Object = evt as Object;
+                temp = JSON.parse(loader.data) as Object;
+                //Alert.show("头像上传成功！");
+
+                //调用页面的页面中的js，执行需要的操作
+                ExternalInterface.call("callJS", temp);
+            });
+            try {
+                loader.load(form.request);
+            } catch (error: Error) {
+                Alert.show("Unable to load request : "+error.message);
+            }
+        }
+        ]]>
+	</fx:Script>
+
+    <s:Label  x="5" y="0" height="22" lineHeight="22" fontSize="18" color="#3399cc" text="本地上传" click="showLocal()"/>
+    <s:Label  x="84" y="0" height="22" verticalAlign="middle" color="#6F6F6F" text="仅支持JPG、GIF、PNG，且文件小于2M"/>
+    <!--编辑图片窗口-->
+    <s:Group x="0" y="40" width="100%" height="344" id="file_edit" visible="true">
+
+        <s:Image x="0" y="0" source="@Embed('assets/default_border.png')"/>
+
+        <s:Label  x="360" y="329" width="136" height="39" lineHeight="39" fontSize="16"
+                  backgroundColor="#3399cc"  buttonMode="true"   verticalAlign="middle"
+                  textAlign="center"
+                  color="white" text="确定" id="btn_save" click="UploadFile()"/>
+
+        <s:Label  x="300" y="329" width="67" height="39" lineHeight="39"  verticalAlign="middle"
+                  fontSize="16" textAlign="center"
+                  backgroundColor="white"  buttonMode="true"
+                  color="#6F6F6F" text="取消" id="btn_cancel2" click="closeHandler()"/>
+
+        <s:Label  x="110" y="329" width="60" height="39" lineHeight="39"  verticalAlign="middle"
+                  fontSize="16" textAlign="center"
+                  backgroundColor="white"  buttonMode="true"
+                  color="#6F6F6F" text="换一张" id="btn_cancel" click="cancelpic()"/>
+
+        <!--默认的,需要选择图片-->
+        <s:Group id="defaultpic">
+            <s:Label  x="1" y="100" width="298" height="39" lineHeight="39"  verticalAlign="middle"
+                      fontSize="16" textAlign="center"
+                      backgroundColor="white"
+                      color="#6F6F6F" text="选择本地图片编辑后上传为头像"/>
+        </s:Group>
+
+        <!--真正的图片源，永远不可见！小截图就从这里截取-->
+        <s:Group x="600" y="0" visible="false">
+            <!--真正的图片-->
+            <s:Image x="0" y="0" id="truePic" />
+            <!--相应的选择框-->
+            <mx:Canvas x="0" y="0" width="100" height="100" id="trueBox"
+                       borderColor="0x999999" borderVisible="true" borderStyle="solid"
+                       backgroundColor="0xFFFFFF" backgroundAlpha="0.3">
+            </mx:Canvas>
+        </s:Group>
+
+        <!--有图片啦, 给人看的，操作用的-->
+        <s:Group x="0" y="0" width="300" height="300" id="bigshow" visible="false">
+            <s:Group x="0" y="0" width="300" height="300" id="bing">
+                <!--大截图-->
+                <s:Image x="0" y="0" width="300" height="300" id="imgPicture" />
+                <!--可缩放的正方形-->
+                <mx:Canvas x="100" y="100" width="100" height="100" id="moveBox"
+                           borderColor="0x999999" borderVisible="true" borderStyle="solid"
+                           backgroundColor="0xFFFFFF" backgroundAlpha="0.3"
+                           mouseDown="boxdown(event)">
+                </mx:Canvas>
+                <!--缩放手柄-->
+                <s:Image x="194" y="194" source="@Embed('assets/rec.png')" id="shoubing" mouseDown="sb(event)"/>
+            </s:Group>
+
+            <!--小截图-->
+            <s:Image width="180" height="180" id="imgPictureLittle" x="321" y="0"/>
+            <s:Image width="40" height="40" id="imgPictureLittle2" x="389" y="228"/>
+
+        </s:Group>
+
+
+        <s:Image x="321" y="0" width="180" height="180" source="@Embed('assets/big_circle.png')"/>
+        <s:Image x="389" y="228" width="40" height="40" source="@Embed('assets/small_circle.png')"/>
+        <s:Label  x="390" y="190" fontSize="12"
+                  verticalAlign="middle"
+                  textAlign="center"
+                  color="#6F6F6F" text="大头像" />
+        <s:Label  x="390" y="277" fontSize="12"
+                  verticalAlign="middle"
+                  textAlign="center"
+                  color="#6F6F6F" text="小头像" />
+
+    </s:Group>
+
+</s:Application>
